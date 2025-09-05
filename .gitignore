@@ -1,0 +1,13 @@
+# Visual Studio
+*.vs/
+*.user
+*.suo
+*.cache
+*.db
+*.VC.db
+
+# build result
+bin/
+obj/
+**/x64/
+**/Release/
