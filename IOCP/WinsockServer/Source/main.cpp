@@ -1,22 +1,14 @@
-#include <WinSock2.h>
-#include <WS2tcpip.h>
-#include <iostream>
+#include "Server.h"
 
-#pragma comment(lib, "Ws2_32.lib")
+#include <iostream>
 
 int main()
 {
-	WSADATA WsaData;
-	if (WSAStartup(MAKEWORD(2, 2), &WsaData))
-	{
-		return 1;
-	}
+	int i = ESocketOperation::Accept;
+	std::cout << i << std::endl;
 
-	HANDLE handler;
-	if (!(handler = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0)))
-	{
-		return 1;
-	}
+	Server server;
+	server.Start(INADDR_LOOPBACK, 5000);
 
-
+	while (true) {}
 }

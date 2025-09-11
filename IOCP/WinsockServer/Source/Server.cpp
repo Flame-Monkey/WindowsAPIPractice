@@ -2,6 +2,9 @@
 
 #include <MSWSock.h>
 #include <iostream>
+#include <chrono>
+
+HANDLE Server::CompletionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
 
 Server::Server()
 {
@@ -16,7 +19,6 @@ Server::~Server()
 // Assignment members in heap
 void Server::Init()
 {
-	HANDLE CompletionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
 }
 
 // Listening Start
@@ -28,6 +30,7 @@ bool Server::Start(long ipv4Addr, short port)
 		return false;
 	}
 
+	CompletionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
 	if (!CreateWorkerThreads())
 	{
 		return false;
@@ -55,6 +58,56 @@ bool Server::Start(long ipv4Addr, short port)
 		return false;
 	}
 
+	SocketContext* context = new SocketContext;
+	context->LastOp = ESocketOperation::Accept;
+	if (CreateIoCompletionPort((HANDLE)listenSocket, CompletionPort, (ULONG_PTR)context, 0) == NULL)
+	{
+		return false;
+	}
+
+	// !!
+	GUID guidAcceptEx = WSAID_ACCEPTEX;
+	LPFN_ACCEPTEX lpfnAcceptEx = nullptr;
+	DWORD bytes = 0;
+	if (SOCKET_ERROR == WSAIoctl(
+		listenSocket,
+		SIO_GET_EXTENSION_FUNCTION_POINTER,
+		&guidAcceptEx,
+		sizeof(guidAcceptEx),
+		&lpfnAcceptEx,
+		sizeof(lpfnAcceptEx),
+		&bytes,
+		NULL,
+		NULL))
+	{
+		std::cerr << "WSAIoctl(AcceptEx) Error: " << WSAGetLastError() << std::endl;
+		return false;
+	}
+	SOCKET acceptSocket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
+
+	char acceptBuffer[(sizeof(SOCKADDR_IN) + 16) * 2];
+	DWORD bytesReceived = 0;
+
+	OVERLAPPED overlapped = { 0 };
+	if (!lpfnAcceptEx(
+		listenSocket,
+		acceptSocket,
+		acceptBuffer,
+		0,
+		sizeof(SOCKADDR_IN) + 16,
+		sizeof(SOCKADDR_IN) + 16,
+		&bytesReceived,
+		&overlapped))
+	{
+		if (WSAGetLastError() != ERROR_IO_PENDING)
+		{
+			std::cerr << "AcceptEx Error: " << WSAGetLastError() << std::endl;
+			closesocket(acceptSocket);
+			return false;
+		}
+	}
+
+	std::cout << "Server Listening On port " << port << std::endl;
 	return true;
 }
 
@@ -66,16 +119,35 @@ void Server::Stop()
 bool Server::CreateWorkerThreads()
 {
 	HANDLE hThread = INVALID_HANDLE_VALUE;
+
+	hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)&Server::WorkerThread, this, 0, NULL);
+
+	return true;
 }
 
-void Server::WorkerThread()
+DWORD WINAPI Server::WorkerThread(LPVOID context)
 {
-
+	int byteTransferred;
+	SocketContext* sockCont = nullptr;
+	LPWSAOVERLAPPED lpOverlapped = NULL;
+	while (true)
+	{
+		GetQueuedCompletionStatus((HANDLE)CompletionPort, (LPDWORD)&byteTransferred, (PULONG_PTR)&sockCont, &lpOverlapped, INFINITE);
+		switch (sockCont->LastOp)
+		{
+		case ESocketOperation::Accept:
+			ProcessAccept();
+			break;
+		}
+	}
 }
 
 void Server::ProcessAccept()
 {
+	std::cout << "ProcessACcept Called" << std::endl;
 
+
+	return;
 }
 
 void Server::ProcessReceive()

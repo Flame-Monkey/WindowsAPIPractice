@@ -3,6 +3,18 @@
 
 #pragma comment(lib, "Ws2_32.lib")
 
+enum ESocketOperation
+{
+	Accept,
+	Recv,
+	Send,
+};
+
+struct SocketContext
+{
+	ESocketOperation LastOp;
+};
+
 class Server
 {
 public:
@@ -14,13 +26,15 @@ public:
 
 protected:
 	WSADATA wsaData;
+	static HANDLE CompletionPort;
 	SOCKET listenSocket;
+	SOCKET acceptSocket;
 	sockaddr_in serverAddr;
 	int portNum;
 
 	bool CreateWorkerThreads();
-	void WorkerThread();
-	void ProcessAccept();
+	static DWORD WINAPI WorkerThread(LPVOID);
+	static void ProcessAccept();
 	void ProcessReceive();
 	void ProcessSend();
 	void ProcessDisconnect();

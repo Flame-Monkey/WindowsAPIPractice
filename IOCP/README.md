@@ -7,6 +7,7 @@ Event, Callback, IOCP**
 IOCP https://learn.microsoft.com/en-us/windows/win32/api/ioapiset/  
 <WinSock2.h> https://learn.microsoft.com/en-us/windows/win32/api/winsock2/  
 <WS2tcpip.h> https://learn.microsoft.com/en-us/windows/win32/api/ws2tcpip/  
+<MSWSock.h>  https://learn.microsoft.com/en-us/windows/win32/api/mswsock/  
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -31,3 +32,7 @@ ClientIoWrite일 경우 최근 연산이 WSASEnd라는 것, 송신 바이트 수
 
 # 실습, BroadCasting Server
 서버가 클라이언트로부터 char...(ASCII) 받고서 브로드캐스팅. 
+
+
+# todo
+Acceptex 정리, Windows API Static으로 사용해야 하는 점 구조 설계  
