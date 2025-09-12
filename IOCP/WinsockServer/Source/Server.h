@@ -40,7 +40,10 @@ protected:
 	SOCKET AcceptSocket;
 	char* AcceptAddrContext;
 
-	LPFN_GETACCEPTEXSOCKADDRS lpfnGetAcceptExSockaddrs;
+	static LPFN_ACCEPTEX lpfnAcceptEx;
+	static LPFN_GETACCEPTEXSOCKADDRS lpfnGetAcceptExSockaddrs;
+
+	bool InitAcceptEx(SOCKET);
 
 	bool CreateWorkerThreads();
 	static DWORD WINAPI WorkerThread(LPVOID);
