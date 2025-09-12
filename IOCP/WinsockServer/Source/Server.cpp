@@ -1,12 +1,12 @@
 #include "Server.h"
 
-#include <MSWSock.h>
 #include <iostream>
+#include <format>
 #include <chrono>
 
-HANDLE Server::CompletionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
-
-Server::Server()
+Server::Server():
+	WSAData{ 0 },
+	CompletionPort{ INVALID_HANDLE_VALUE }
 {
 
 }
@@ -24,7 +24,7 @@ void Server::Init()
 // Listening Start
 bool Server::Start(long ipv4Addr, short port)
 {
-	if (WSAStartup(MAKEWORD(2, 2), &wsaData))
+	if (WSAStartup(MAKEWORD(2, 2), &WSAData))
 	{
 		std::cerr << "WSAStartup() Error: " << WSAGetLastError() << std::endl;
 		return false;
@@ -36,73 +36,65 @@ bool Server::Start(long ipv4Addr, short port)
 		return false;
 	}
 
-	serverAddr.sin_family = AF_INET;
-	serverAddr.sin_addr.S_un.S_addr = htonl(ipv4Addr);
-	serverAddr.sin_port = htons(port);
+	ServerAddr.sin_family = AF_INET;
+	ServerAddr.sin_addr.S_un.S_addr = htonl(ipv4Addr);
+	ServerAddr.sin_port = htons(port);
 
-	listenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (listenSocket == INVALID_SOCKET)
+	ListenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (ListenSocket == INVALID_SOCKET)
 	{
 		std::cerr << "socket() Error: " << WSAGetLastError() << std::endl;
 		WSACleanup();
 		return false;
 	}
 
-	if (bind(listenSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR)
+	if (bind(ListenSocket, (sockaddr*)&ServerAddr, sizeof(ServerAddr)) == SOCKET_ERROR)
 	{
 		return false;
 	}
 
-	if (listen(listenSocket, SOMAXCONN) == SOCKET_ERROR)
+	if (listen(ListenSocket, SOMAXCONN) == SOCKET_ERROR)
 	{
 		return false;
 	}
 
 	SocketContext* context = new SocketContext;
+	context->MyServer = this;
 	context->LastOp = ESocketOperation::Accept;
-	if (CreateIoCompletionPort((HANDLE)listenSocket, CompletionPort, (ULONG_PTR)context, 0) == NULL)
+	context->Overlapped = new OVERLAPPED;
+	ZeroMemory(context->Overlapped, sizeof(OVERLAPPED));
+
+	if (CreateIoCompletionPort((HANDLE)ListenSocket, CompletionPort, (ULONG_PTR)context, 0) == NULL)
 	{
 		return false;
 	}
 
-	// !!
+	// load AcceptEx function pointer
 	GUID guidAcceptEx = WSAID_ACCEPTEX;
 	LPFN_ACCEPTEX lpfnAcceptEx = nullptr;
 	DWORD bytes = 0;
-	if (SOCKET_ERROR == WSAIoctl(
-		listenSocket,
-		SIO_GET_EXTENSION_FUNCTION_POINTER,
-		&guidAcceptEx,
-		sizeof(guidAcceptEx),
-		&lpfnAcceptEx,
-		sizeof(lpfnAcceptEx),
-		&bytes,
-		NULL,
-		NULL))
+	if (WSAIoctl(ListenSocket, SIO_GET_EXTENSION_FUNCTION_POINTER, &guidAcceptEx, sizeof(guidAcceptEx),
+		&lpfnAcceptEx, sizeof(lpfnAcceptEx), &bytes, NULL, NULL) == SOCKET_ERROR)
 	{
 		std::cerr << "WSAIoctl(AcceptEx) Error: " << WSAGetLastError() << std::endl;
 		return false;
 	}
-	SOCKET acceptSocket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
 
-	char acceptBuffer[(sizeof(SOCKADDR_IN) + 16) * 2];
-	DWORD bytesReceived = 0;
-
-	OVERLAPPED overlapped = { 0 };
-	if (!lpfnAcceptEx(
-		listenSocket,
-		acceptSocket,
-		acceptBuffer,
-		0,
-		sizeof(SOCKADDR_IN) + 16,
-		sizeof(SOCKADDR_IN) + 16,
-		&bytesReceived,
-		&overlapped))
+	AcceptSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if(AcceptSocket == INVALID_SOCKET)
+	{
+		std::cerr << "Accept Socket Error: " << WSAGetLastError() << std::endl;
+		return false;
+	}
+	AcceptAddrContext = new char[(sizeof(SOCKADDR_IN) + 16) * 2];
+	ZeroMemory(AcceptAddrContext, (sizeof(SOCKADDR_IN) + 16) * 2);
+	if (!lpfnAcceptEx(ListenSocket, AcceptSocket, AcceptAddrContext,
+		0, sizeof(SOCKADDR_IN) + 16, sizeof(SOCKADDR_IN) + 16, NULL, context->Overlapped))
 	{
 		if (WSAGetLastError() != ERROR_IO_PENDING)
 		{
 			std::cerr << "AcceptEx Error: " << WSAGetLastError() << std::endl;
-			closesocket(acceptSocket);
+			closesocket(AcceptSocket);
 			return false;
 		}
 	}
@@ -125,27 +117,76 @@ bool Server::CreateWorkerThreads()
 	return true;
 }
 
-DWORD WINAPI Server::WorkerThread(LPVOID context)
+DWORD WINAPI Server::WorkerThread(LPVOID serverInstance)
 {
+	Server* server = ((Server*)serverInstance);
 	int byteTransferred;
 	SocketContext* sockCont = nullptr;
 	LPWSAOVERLAPPED lpOverlapped = NULL;
+
 	while (true)
 	{
-		GetQueuedCompletionStatus((HANDLE)CompletionPort, (LPDWORD)&byteTransferred, (PULONG_PTR)&sockCont, &lpOverlapped, INFINITE);
+		GetQueuedCompletionStatus(server->CompletionPort, (LPDWORD)&byteTransferred, (PULONG_PTR)&sockCont, &lpOverlapped, INFINITE);
 		switch (sockCont->LastOp)
 		{
 		case ESocketOperation::Accept:
-			ProcessAccept();
+			server->ProcessAccept(sockCont);
 			break;
+		case ESocketOperation::Recv:
+			server->ProcessReceive();
+			break;
+		case ESocketOperation::Send:
+			server->ProcessSend();
+			break;
+		default:
+			std::cout << "Unknown Operation" << std::endl;
 		}
 	}
 }
 
-void Server::ProcessAccept()
+void Server::ProcessAccept(SocketContext* context)
 {
-	std::cout << "ProcessACcept Called" << std::endl;
+	sockaddr* localAddr = nullptr;
+	sockaddr* remoteAddr = nullptr;
+	int localLen = 0, remoteLen = 0;
 
+	GUID guidGetAcceptExSockaddrs = WSAID_GETACCEPTEXSOCKADDRS;
+
+	DWORD dwBytes = 0;
+	int result = WSAIoctl(
+		ListenSocket,
+		SIO_GET_EXTENSION_FUNCTION_POINTER,
+		&guidGetAcceptExSockaddrs,
+		sizeof(guidGetAcceptExSockaddrs),
+		&lpfnGetAcceptExSockaddrs,
+		sizeof(lpfnGetAcceptExSockaddrs),
+		&dwBytes,
+		NULL,
+		NULL
+	);
+
+	if (result == SOCKET_ERROR) {
+		printf("WSAIoctl for GetAcceptExSockaddrs failed: %d\n", WSAGetLastError());
+		return;
+	}
+
+	lpfnGetAcceptExSockaddrs(
+		AcceptAddrContext,
+		0,
+		sizeof(SOCKADDR_IN) + 16,
+		sizeof(SOCKADDR_IN) + 16,
+		&localAddr,
+		&localLen,
+		&remoteAddr,
+		&remoteLen
+	);
+	// lovalAddr, remoteAddr = nullptr;
+	std::cout << localAddr << ' ' << remoteAddr << std::endl;
+	
+	for (int i = 0; i < (sizeof(sockaddr_in)); i++) 
+	{ 
+		printf("%d: %02d\n", i, *(((unsigned char*)localAddr) + i)); 
+	}
 
 	return;
 }

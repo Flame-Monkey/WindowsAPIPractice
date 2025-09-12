@@ -1,18 +1,25 @@
 #include <WinSock2.h>
 #include <WS2tcpip.h>
+#include <MSWSock.h>
 
 #pragma comment(lib, "Ws2_32.lib")
+#pragma comment(lib, "Mswsock.lib")
+
+class Server;
 
 enum ESocketOperation
 {
-	Accept,
-	Recv,
-	Send,
+	Accept = 0,
+	Recv = 1,
+	Send = 2,
 };
 
 struct SocketContext
 {
+	Server* MyServer;
 	ESocketOperation LastOp;
+	SOCKET Socket;
+	OVERLAPPED* Overlapped;
 };
 
 class Server
@@ -25,16 +32,19 @@ public:
 	void Stop();
 
 protected:
-	WSADATA wsaData;
-	static HANDLE CompletionPort;
-	SOCKET listenSocket;
-	SOCKET acceptSocket;
-	sockaddr_in serverAddr;
-	int portNum;
+	WSADATA WSAData;
+	HANDLE CompletionPort;
+	sockaddr_in ServerAddr;
+	int PortNum;
+	SOCKET ListenSocket;
+	SOCKET AcceptSocket;
+	char* AcceptAddrContext;
+
+	LPFN_GETACCEPTEXSOCKADDRS lpfnGetAcceptExSockaddrs;
 
 	bool CreateWorkerThreads();
 	static DWORD WINAPI WorkerThread(LPVOID);
-	static void ProcessAccept();
+	void ProcessAccept(SocketContext* context);
 	void ProcessReceive();
 	void ProcessSend();
 	void ProcessDisconnect();
