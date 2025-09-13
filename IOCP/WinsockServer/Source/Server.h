@@ -20,6 +20,9 @@ struct SocketContext
 	ESocketOperation LastOp;
 	SOCKET Socket;
 	OVERLAPPED* Overlapped;
+	WSABUF* DataBuf;
+	int ImmediatelyReceivedBytes; // Won't use WSAGetOverlappedResult
+	int Flags;
 };
 
 class Server
@@ -38,7 +41,7 @@ protected:
 	int PortNum;
 	SOCKET ListenSocket;
 	SOCKET AcceptSocket;
-	char* AcceptAddrContext;
+	SocketContext* AcceptContext;
 
 	static LPFN_ACCEPTEX lpfnAcceptEx;
 	static LPFN_GETACCEPTEXSOCKADDRS lpfnGetAcceptExSockaddrs;
@@ -48,7 +51,8 @@ protected:
 	bool CreateWorkerThreads();
 	static DWORD WINAPI WorkerThread(LPVOID);
 	void ProcessAccept(SocketContext* context);
-	void ProcessReceive();
+	void AcceptClient();
+	void ProcessReceive(SocketContext*, int);
 	void ProcessSend();
 	void ProcessDisconnect();
 };

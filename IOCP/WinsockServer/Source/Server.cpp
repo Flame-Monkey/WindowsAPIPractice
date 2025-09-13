@@ -13,7 +13,7 @@ Server::Server() :
 	PortNum{ 0 },
 	ListenSocket{ INVALID_SOCKET },
 	AcceptSocket{ INVALID_SOCKET },
-	AcceptAddrContext{ nullptr }
+	AcceptContext{ nullptr }
 {
 
 }
@@ -26,6 +26,15 @@ Server::~Server()
 // Assignment members in heap
 void Server::Init()
 {
+	AcceptContext = new SocketContext;
+	AcceptContext->MyServer = this;
+	AcceptContext->LastOp = ESocketOperation::Accept;
+	AcceptContext->Overlapped = new OVERLAPPED;
+	AcceptContext->DataBuf = new WSABUF;
+	AcceptContext->DataBuf->buf = new char[(sizeof(SOCKADDR_IN) + 16) * 2];
+	ZeroMemory(AcceptContext->DataBuf->buf, (sizeof(SOCKADDR_IN) + 16) * 2);
+	AcceptContext->DataBuf->len = (sizeof(SOCKADDR_IN) + 16) * 2;
+	ZeroMemory(AcceptContext->Overlapped, sizeof(OVERLAPPED));
 }
 
 // Listening Start
@@ -65,13 +74,7 @@ bool Server::Start(long ipv4Addr, short port)
 		return false;
 	}
 
-	SocketContext* context = new SocketContext;
-	context->MyServer = this;
-	context->LastOp = ESocketOperation::Accept;
-	context->Overlapped = new OVERLAPPED;
-	ZeroMemory(context->Overlapped, sizeof(OVERLAPPED));
-
-	if (CreateIoCompletionPort((HANDLE)ListenSocket, CompletionPort, (ULONG_PTR)context, 0) == NULL)
+	if (CreateIoCompletionPort((HANDLE)ListenSocket, CompletionPort, (ULONG_PTR)AcceptContext, 0) == NULL)
 	{
 		return false;
 	}
@@ -83,15 +86,12 @@ bool Server::Start(long ipv4Addr, short port)
 		return false;
 	}
 
-	AcceptAddrContext = new char[(sizeof(SOCKADDR_IN) + 16) * 2];
-	ZeroMemory(AcceptAddrContext, (sizeof(SOCKADDR_IN) + 16) * 2);
-
 	if (!InitAcceptEx(ListenSocket))
 	{
 		return false;
 	}
-	if (!lpfnAcceptEx(ListenSocket, AcceptSocket, AcceptAddrContext,
-		0, sizeof(SOCKADDR_IN) + 16, sizeof(SOCKADDR_IN) + 16, NULL, context->Overlapped))
+	if (!lpfnAcceptEx(ListenSocket, AcceptSocket, AcceptContext->DataBuf->buf,
+		0, sizeof(SOCKADDR_IN) + 16, sizeof(SOCKADDR_IN) + 16, NULL, AcceptContext->Overlapped))
 	{
 		if (WSAGetLastError() != ERROR_IO_PENDING)
 		{
@@ -161,13 +161,15 @@ DWORD WINAPI Server::WorkerThread(LPVOID serverInstance)
 	while (true)
 	{
 		GetQueuedCompletionStatus(server->CompletionPort, (LPDWORD)&byteTransferred, (PULONG_PTR)&sockCont, &lpOverlapped, INFINITE);
+		std::cout << "Transferred: " << byteTransferred << std::endl;
 		switch (sockCont->LastOp)
 		{
 		case ESocketOperation::Accept:
+			std::cout << "Process Accept\n";
 			server->ProcessAccept(sockCont);
 			break;
 		case ESocketOperation::Recv:
-			server->ProcessReceive();
+			server->ProcessReceive(sockCont, byteTransferred);
 			break;
 		case ESocketOperation::Send:
 			server->ProcessSend();
@@ -183,9 +185,8 @@ void Server::ProcessAccept(SocketContext* context)
 	sockaddr* localAddr = nullptr;
 	sockaddr* remoteAddr = nullptr;
 	int localLen = 0, remoteLen = 0;
-
 	lpfnGetAcceptExSockaddrs(
-		AcceptAddrContext,
+		AcceptContext->DataBuf->buf,
 		0,
 		sizeof(SOCKADDR_IN) + 16,
 		sizeof(SOCKADDR_IN) + 16,
@@ -194,33 +195,23 @@ void Server::ProcessAccept(SocketContext* context)
 		&remoteAddr,
 		&remoteLen
 	);
-	char ipstring[20];
+
+	char ipstring[32];
 	std::cout << "Client Connected. IPAddress: "
 		<< inet_ntop(AF_INET, &((sockaddr_in*)remoteAddr)->sin_addr, ipstring, 20) 
 		<< " Port: " << ntohs(((SOCKADDR_IN*)remoteAddr)->sin_port) << std::endl;
 
-
-
+	AcceptClient();
+	ZeroMemory(AcceptContext->DataBuf->buf, AcceptContext->DataBuf->len);
+	ZeroMemory(AcceptContext->Overlapped, sizeof(OVERLAPPED));
 	AcceptSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (AcceptSocket == INVALID_SOCKET)
 	{
 		std::cerr << "Accept Socket Error: " << WSAGetLastError() << std::endl;
 		return;
 	}
-
-	AcceptAddrContext = new char[(sizeof(SOCKADDR_IN) + 16) * 2];
-	ZeroMemory(AcceptAddrContext, (sizeof(SOCKADDR_IN) + 16) * 2);
-	SocketContext* c = new SocketContext;
-	c->MyServer = this;
-	c->LastOp = ESocketOperation::Accept;
-	c->Overlapped = new OVERLAPPED;
-	ZeroMemory(c->Overlapped, sizeof(OVERLAPPED));
-	if (!InitAcceptEx(ListenSocket))
-	{
-		return;
-	}
-	if (!lpfnAcceptEx(ListenSocket, AcceptSocket, AcceptAddrContext,
-		0, sizeof(SOCKADDR_IN) + 16, sizeof(SOCKADDR_IN) + 16, NULL, c->Overlapped))
+	if (!lpfnAcceptEx(ListenSocket, AcceptSocket, AcceptContext->DataBuf->buf,
+		0, sizeof(SOCKADDR_IN) + 16, sizeof(SOCKADDR_IN) + 16, NULL, AcceptContext->Overlapped))
 	{
 		if (WSAGetLastError() != ERROR_IO_PENDING)
 		{
@@ -230,13 +221,79 @@ void Server::ProcessAccept(SocketContext* context)
 		}
 	}
 
+	std::cout << "New accept start\n";
+
 	return;
 }
 
-void Server::ProcessReceive()
+void Server::AcceptClient()
 {
+	if (AcceptSocket == INVALID_SOCKET)
+	{
+		std::cerr << "Accept Socket Invalid" << std::endl;
+		return;
+	}
 
+	SocketContext* context = new SocketContext;
+	context->MyServer = this;
+	context->Socket = AcceptSocket;
+	context->LastOp = ESocketOperation::Recv;
+	context->DataBuf = new WSABUF;
+	context->DataBuf->buf = new char[2048];
+	context->DataBuf->len = 2048;
+	context->Flags = 0;
+	context->Overlapped = new OVERLAPPED;
+	ZeroMemory(context->Overlapped, sizeof(OVERLAPPED));
+
+	if (CreateIoCompletionPort((HANDLE)AcceptSocket, CompletionPort, (ULONG_PTR)context, 0) == NULL)
+	{
+		std::cerr << "CreateIoCompletionPort() Error: " << WSAGetLastError() << std::endl;
+		return;
+	}
+
+	if (WSARecv(AcceptSocket, context->DataBuf, 1, (LPDWORD)&context->ImmediatelyReceivedBytes,
+		(LPDWORD) & context->Flags, context->Overlapped, NULL) == SOCKET_ERROR && WSAGetLastError() != ERROR_IO_PENDING)
+	{
+		std::cerr << "WSARecv() Error: " << WSAGetLastError() << std::endl;
+		return;
+	}
+	std::cout << "Recv Started\n";
+
+
+	return;
 }
+
+void Server::ProcessReceive(SocketContext* context, int bytesTransferred)
+{
+	if (bytesTransferred == 0)
+	{
+		std::cout << "Client disconnected." << std::endl;
+		closesocket(context->Socket);
+		delete context;
+		return;
+	}
+	context->DataBuf->buf[bytesTransferred] = '\0';
+
+	std::cout << "Received: " << context->DataBuf->buf << std::endl;
+
+	ZeroMemory(context->Overlapped, sizeof(OVERLAPPED));
+	context->LastOp = ESocketOperation::Recv;
+	context->ImmediatelyReceivedBytes = 0;
+	context->Flags = 0;
+
+	DWORD recvBytes = 0;
+	if (WSARecv(context->Socket, context->DataBuf, 1, &recvBytes,
+		(LPDWORD)&context->Flags, context->Overlapped, NULL) == SOCKET_ERROR)
+	{
+		if (WSAGetLastError() != ERROR_IO_PENDING)
+		{
+			std::cerr << "WSARecv Error: " << WSAGetLastError() << std::endl;
+			closesocket(context->Socket);
+			delete context;
+		}
+	}
+}
+
 
 void Server::ProcessSend()
 {
