@@ -57,5 +57,8 @@ protected:
 	void ProcessReceive(SocketContext*, int);
 	void ProcessSend();
 	void BroadCast(char* buffer, int length);
-	void ProcessDisconnect();
+	void Disconnect(SOCKET socket);
+
+	SocketContext* GetRecvSocketContext(SOCKET socket);
+	SocketContext* GetSendSocketContext(SOCKET socket, char* buffer, int bytesLength);
 };

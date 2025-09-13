@@ -13,7 +13,8 @@ Server::Server() :
 	PortNum{ 0 },
 	ListenSocket{ INVALID_SOCKET },
 	AcceptSocket{ INVALID_SOCKET },
-	AcceptContext{ nullptr }
+	AcceptContext{ nullptr },
+	ConnectedSockets{nullptr}
 {
 
 }
@@ -162,14 +163,14 @@ DWORD WINAPI Server::WorkerThread(LPVOID serverInstance)
 	while (true)
 	{
 		GetQueuedCompletionStatus(server->CompletionPort, (LPDWORD)&byteTransferred, (PULONG_PTR)&sockCont, &lpOverlapped, INFINITE);
-		std::cout << "Transferred: " << byteTransferred << std::endl;
 		SocketContext* s = (SocketContext*) lpOverlapped;
-		std::cout << s->LastOp << std::endl;
-		std::cout << "Test " << (sockCont == (void*)lpOverlapped) << std::endl;
+
+		std::cout << "Transferred: " << byteTransferred << std::endl;
+
 		switch (s->LastOp)
 		{
 		case ESocketOperation::Accept:
-			std::cout << "Process Accept\n";
+			std::cout << "Process accept\n";
 			server->ProcessAccept(sockCont);
 			break;
 		case ESocketOperation::Recv:
@@ -177,6 +178,7 @@ DWORD WINAPI Server::WorkerThread(LPVOID serverInstance)
 			server->ProcessReceive(sockCont, byteTransferred);
 			break;
 		case ESocketOperation::Send:
+			std::cout << "Process send\n";
 			server->ProcessSend();
 			break;
 		default:
@@ -240,15 +242,7 @@ void Server::AcceptClient()
 	}
 	ConnectedSockets->push_back(AcceptSocket);
 
-	SocketContext* context = new SocketContext;
-	context->MyServer = this;
-	context->Socket = AcceptSocket;
-	context->LastOp = ESocketOperation::Recv;
-	context->DataBuf = new WSABUF;
-	context->DataBuf->buf = new char[2048];
-	context->DataBuf->len = 2048;
-	context->Flags = 0;
-	ZeroMemory(&context->Overlapped, sizeof(OVERLAPPED));
+	SocketContext* context = GetRecvSocketContext(AcceptSocket);\
 
 	if (CreateIoCompletionPort((HANDLE)AcceptSocket, CompletionPort, (ULONG_PTR)context, 0) == NULL)
 	{
@@ -264,7 +258,6 @@ void Server::AcceptClient()
 	}
 	std::cout << "Recv Started\n";
 
-
 	return;
 }
 
@@ -272,16 +265,11 @@ void Server::ProcessReceive(SocketContext* context, int bytesTransferred)
 {
 	if (bytesTransferred == 0)
 	{
-		std::cout << "Client disconnected." << std::endl;
-		std::cout << "test n\n";
-		closesocket(context->Socket);
-		std::cout << "test nn\n";
+		Disconnect(context->Socket);
 		delete context;
-		std::cout << "test nnn\n";
 		return;
 	}
 	context->DataBuf->buf[bytesTransferred] = '\0';
-
 	std::cout << "Received: " << context->DataBuf->buf << std::endl;
 
 	BroadCast(context->DataBuf->buf, bytesTransferred);
@@ -312,21 +300,11 @@ void Server::ProcessSend()
 
 void Server::BroadCast(char* buffer, int length)
 {
-	std::cout << "BroadCast!!!\n";
-
+	std::cout << "BroadCast!!!" << std::endl;
+	;
 	for(auto s : *ConnectedSockets)
 	{
-		std::cout << "BroadCast...\n";
-		SocketContext* context = new SocketContext;
-		context->LastOp = ESocketOperation::Send;
-		context->DataBuf = new WSABUF;
-		context->DataBuf->len = length;
-		context->DataBuf->buf = new char[length];
-		std::copy(buffer, buffer + length, context->DataBuf->buf);
-		context->MyServer = this;
-		context->Socket = s;
-		context->Flags = 0;
-		ZeroMemory(&context->Overlapped, sizeof(OVERLAPPED));
+		SocketContext* context = GetSendSocketContext(s, buffer, length);
 
 		if (WSASend(context->Socket, context->DataBuf, 1, &context->DataBuf->len, context->Flags,
 			&context->Overlapped, NULL) == SOCKET_ERROR)
@@ -338,7 +316,40 @@ void Server::BroadCast(char* buffer, int length)
 	}
 }
 
-void Server::ProcessDisconnect()
+void Server::Disconnect(SOCKET socket)
 {
+	ConnectedSockets->erase(std::find(ConnectedSockets->begin(), ConnectedSockets->end(), socket));
+	closesocket(socket);
+	std::cout << "Client disconnected." << std::endl;
+}
 
+SocketContext* Server::GetRecvSocketContext(SOCKET socket)
+{
+	SocketContext* context = new SocketContext;
+	context->MyServer = this;
+	context->Socket = socket;
+	context->LastOp = ESocketOperation::Recv;
+	context->DataBuf = new WSABUF;
+	context->DataBuf->buf = new char[2048];
+	context->DataBuf->len = 2048;
+	context->Flags = 0;
+	ZeroMemory(&context->Overlapped, sizeof(OVERLAPPED));
+
+	return context;
+}
+
+SocketContext* Server::GetSendSocketContext(SOCKET socket, char* buffer, int bytesLength)
+{
+	SocketContext* context = new SocketContext;
+	context->LastOp = ESocketOperation::Send;
+	context->DataBuf = new WSABUF;
+	context->DataBuf->len = bytesLength;
+	context->DataBuf->buf = new char[bytesLength];
+	std::copy(buffer, buffer + bytesLength, context->DataBuf->buf);
+	context->MyServer = this;
+	context->Socket = socket;
+	context->Flags = 0;
+	ZeroMemory(&context->Overlapped, sizeof(OVERLAPPED));
+
+	return context;
 }
