@@ -166,13 +166,14 @@ DWORD WINAPI Server::WorkerThread(LPVOID serverInstance)
 		SocketContext* s = (SocketContext*) lpOverlapped;
 		std::cout << s->LastOp << std::endl;
 		std::cout << "Test " << (sockCont == (void*)lpOverlapped) << std::endl;
-		switch (sockCont->LastOp)
+		switch (s->LastOp)
 		{
 		case ESocketOperation::Accept:
 			std::cout << "Process Accept\n";
 			server->ProcessAccept(sockCont);
 			break;
 		case ESocketOperation::Recv:
+			std::cout << "Process receive\n";
 			server->ProcessReceive(sockCont, byteTransferred);
 			break;
 		case ESocketOperation::Send:
@@ -311,8 +312,11 @@ void Server::ProcessSend()
 
 void Server::BroadCast(char* buffer, int length)
 {
+	std::cout << "BroadCast!!!\n";
+
 	for(auto s : *ConnectedSockets)
 	{
+		std::cout << "BroadCast...\n";
 		SocketContext* context = new SocketContext;
 		context->LastOp = ESocketOperation::Send;
 		context->DataBuf = new WSABUF;
