@@ -1,6 +1,7 @@
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 #include <MSWSock.h>
+#include <list>
 
 #pragma comment(lib, "Ws2_32.lib")
 #pragma comment(lib, "Mswsock.lib")
@@ -16,10 +17,10 @@ enum ESocketOperation
 
 struct SocketContext
 {
+	OVERLAPPED Overlapped;
 	Server* MyServer;
 	ESocketOperation LastOp;
 	SOCKET Socket;
-	OVERLAPPED* Overlapped;
 	WSABUF* DataBuf;
 	int ImmediatelyReceivedBytes; // Won't use WSAGetOverlappedResult
 	int Flags;
@@ -42,6 +43,7 @@ protected:
 	SOCKET ListenSocket;
 	SOCKET AcceptSocket;
 	SocketContext* AcceptContext;
+	std::list<SOCKET>* ConnectedSockets;
 
 	static LPFN_ACCEPTEX lpfnAcceptEx;
 	static LPFN_GETACCEPTEXSOCKADDRS lpfnGetAcceptExSockaddrs;
@@ -54,5 +56,6 @@ protected:
 	void AcceptClient();
 	void ProcessReceive(SocketContext*, int);
 	void ProcessSend();
+	void BroadCast(char* buffer, int length);
 	void ProcessDisconnect();
 };
