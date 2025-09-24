@@ -10,6 +10,7 @@ IOCP https://learn.microsoft.com/en-us/windows/win32/api/ioapiset/
 <MSWSock.h>  https://learn.microsoft.com/en-us/windows/win32/api/mswsock/  
 
 #pragma comment(lib, "Ws2_32.lib")
+#pragma comment(lib, "Mswsock.lib")
 
 # 예제
 https://github.com/microsoft/Windows-classic-samples/blob/main/Samples/Win7Samples/netds/winsock/iocp/server/IocpServer.Cpp  
